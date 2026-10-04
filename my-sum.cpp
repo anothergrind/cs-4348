@@ -20,6 +20,7 @@
 #include <fstream>  // input/output files
 #include <string>
 #include <vector> // parent-local only; shared arrays live in shared memory
+#include <cmath>  // log2 calculations
 
 using namespace std;
 
@@ -32,8 +33,13 @@ Proces sycnchronization can be achieved only through read and write oeprations o
 
 // Submission must have Makefile to compile program, and README file with names of all team members and instructions for running compiled program
 // TODO: Implement the Hillis and Steele concurrent prefix-sum algorithm. This algorithm takes in an input array
-int hillis_steele_prefix_sum(int[] x)
+int hillis_steele_prefix_sum(int x[], int n, int m, isstream &input, ofstream &output)
 {
+    // dealin with file input
+    string line;
+    while (getline(input, line))
+    {
+    }
     for (int p = 1; p <= log2(n); p++)
     {
         for (i = 0; i <= n - 1; i++)
@@ -77,7 +83,7 @@ Algorithm 2 A non-reusable barrier
 5:      skip                                    ▷ spin
 6: end while
 */
-void non - reusable - barrier(int wall[])
+void non_reusable_barrier(int wall[])
 {
     wall[i] = 1;
     while (true)
