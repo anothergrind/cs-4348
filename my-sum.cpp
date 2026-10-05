@@ -1,9 +1,8 @@
-// Kamsi Ozorji
+// Kamsi Ozorji & Khoa Bui
 // CS 4348
 // Professor Mingming Chen
 // Programming Project 1
 
-// POSIX process + System V shared memory
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -11,7 +10,6 @@
 #include <unistd.h>
 #include <signal.h>
 
-// C standard library (argument parsing + error reporting, file I/O & math)
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
@@ -24,7 +22,7 @@
 
 using namespace std;
 
-// reading from the input file, deals with commas and spaces
+// reading from the input file, deals with commas, tabs, and spaces
 vector<int> read_file(string filename)
 {
     vector<int> data;
@@ -72,7 +70,7 @@ bool write_output_file(string &filename, volatile int *x, int n)
     int maxP = num_phases(n);
     for (int i = 0; i < n; ++i)
     {
-        out << x[maxP * n + i];
+        out << x[(maxP % 2) * n + i];
         if (i < n - 1)
             out << " ";
     }
@@ -91,7 +89,7 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
 
     char *end;
 
-    // Parse n
+    // parse n
     long n_long = strtol(argv[1], &end, 10);
     if (end == argv[1] || *end != '\0')
     {
@@ -100,7 +98,7 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     }
     n = static_cast<int>(n_long);
 
-    // Parse m
+    // parse m
     long m_long = strtol(argv[2], &end, 10);
     if (end == argv[2] || *end != '\0')
     {
@@ -109,7 +107,7 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     }
     m = static_cast<int>(m_long);
 
-    // Validate constraints
+    // validate constraints
     if (n <= 0)
     {
         cerr << "Error: n must be positive integers" << endl;
@@ -132,19 +130,21 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     return true;
 }
 
-// implemented a non-reusable barrier algorithm
-void non_reusable_barrier(int id, int row, int m, volatile int *wall)
+// implemented a reusable barrier algorithm, O(1) space complexity, O(m) time complexity
+void reusable_barrier(int id, int row, int m, volatile int *wall)
 {
-    wall[row * m + id] = 1; // signal that this process has reached the barrier
-    for (int j = 0; j < m; j++)
+    while (wall[0] != (row - 1) * m + id)
     {
-        while (wall[row * m + j] == 0)
-        {
-        } // wait for all processes to reach the barrier
+        // wait until its process's turn
+    }
+    wall[0] = (row - 1) * m + id + 1; // signal that this process has arrived
+    while (wall[0] < row * m)
+    {
+        // wait until every process has arrived
     }
 }
 
-// implemented Hillis and Steele concurrent prefix-sum algorithm
+// implemented Hillis and Steele concurrent prefix-sum algorithm, maintains the time complexity in doc
 void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile int *wall)
 {
     int start, end;
@@ -169,38 +169,27 @@ void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile in
         {
             if (i < (1 << (p - 1)))
             {
-                x[p * n + i] = x[(p - 1) * n + i];
+                x[(p % 2) * n + i] = x[((p - 1) % 2) * n + i];
             }
             else
             {
-                x[p * n + i] = x[(p - 1) * n + (i - (1 << (p - 1)))] + x[(p - 1) * n + i];
+                x[(p % 2) * n + i] = x[((p - 1) % 2) * n + (i - (1 << (p - 1)))] + x[((p - 1) % 2) * n + i];
             }
         }
-        non_reusable_barrier(id, p, m, wall); // wait for all processes to finish this phase
+        reusable_barrier(id, p, m, wall);
     }
 }
-
-/*
-BONUS:
-
-5% by modifying barrer algorithm to make barrier object reusable while preserving original structure of algorithm
-10% if your reusable barrier only uses O(1) space and program uses only O(n) space
-
-*/
 
 int main(int argc, char *argv[])
 {
     int n, m;
     string inputFile, outputFile;
 
-    // 1. Parse and validate arguments
+    // parse and validate arguments
     if (!parse_arguments(argc, argv, n, m, inputFile, outputFile))
     {
         return EXIT_FAILURE;
     }
-
-    int n_numphases = num_phases(n);
-    int phases = n_numphases + 1; // total number of phases including the initial phase
 
     // Read input file
     vector<int> data = read_file(inputFile);
@@ -217,8 +206,8 @@ int main(int argc, char *argv[])
 
     cout << "Successfully read " << data.size() << " integers from " << inputFile << endl;
 
-    int size = (n_numphases + 1) * n * sizeof(int);
-    int wallSize = phases * m * sizeof(int);
+    int size = 2 * n * sizeof(int);
+    int wallSize = sizeof(int);
 
     int shmID = shmget(IPC_PRIVATE, size, IPC_CREAT | 0600);
     if (shmID == -1)
@@ -251,17 +240,14 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Copy data to shared memory
+    // copy data to shared memory
     for (int i = 0; i < n; i++)
     {
         x[i] = data[i];
     }
 
     // initialize barrier memory
-    for (int i = 0; i < phases * m; i++)
-    {
-        wall[i] = 0;
-    }
+    wall[0] = 0;
 
     vector<pid_t> children;
     children.reserve(m);
