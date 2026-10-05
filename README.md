@@ -1,50 +1,46 @@
-# cs-4348
-Project 1, CS 4348
+## Programming Project 1
 
-Team members: Kamsi Ozorji, Khoa Bui
+### CS 4348: Operating Systems
 
-## Running `main.cpp`
+Professor Mingming Chen
+Team Members: Kamsi Ozorji and Khoa Bui
 
-This program uses POSIX/Linux APIs (`fork`, `waitpid`, and System V shared
-memory). Run it in Linux or WSL; it will not compile as a native Windows
-program with the regular Windows C++ libraries.
+This program implements the Hillis and Steele concurrent prefix-sum algorithm using POSIX processes (`fork`, `waitpid`) and shared memory (`shmget`, `shmat`). It is designed to run on Linux/Unix-based machines (e.g., Ubuntu, WSL, or UTD CS servers).
 
-From an Ubuntu/WSL terminal:
+This program computes prefix sums with m forked workers, via the Hillis-Steele algorithm, using shared memory and a reusable barrier
+Runs in O(n log n / m + m log n) time complexity, with O(n) space complexity
 
-```bash
-cd /mnt/c/Users/mkhoa/OneDrive/Documents/cs-4348
+#### Compiling the program
+
+From an Ubuntu/WSL terminal
+
+```
+cd your_library/cs-4348
 make
 ```
 
-The input file must contain at least `n` whitespace-separated integers. For
-example:
+To clean up previous compilations
+`make clean`
 
-```bash
+The input file must contain at least `n` spaced integers. Currently the spacing can be done with spaces, tabs, commas, or a combination of those mentioned above.
+
+### Running the program
+
+The program acccepts four command line arguments in the order below:
+`./my-sum <n> <m> <input_file> <output_file>`
+
+- n, the number of values
+- m, the number of worker processes
+- A, the input file
+- B, the output file
+
+For example
+
+```
 printf "1 2 3 4 5\n" > input.txt
 ./my-sum 5 2 input.txt output.txt
 cat output.txt
 ```
 
 The output is:
-
-```text
-1 3 6 10 15
-```
-
-The four arguments are `n`, the number of values; `m`, the number of worker
-processes; the input file; and the output file.
-
-The program uses a reusable generation-based barrier and two alternating
-working arrays. This avoids storing all intermediate Hillis-Steele rows and
-uses `O(n)` space for the working arrays. The barrier stores one arrival
-generation per worker, so its barrier state is `O(m)`; because `m <= n`, the
-total shared memory remains `O(n)`. 
-O(1) barrier bonus: we did not implement an `O(1)`-space
-barrier. With read/write-only synchronization, each worker keeps its own
-arrival slot.
-
-To remove the compiled executable:
-
-```bash
-make clean
-```
+`1 3 6 10 15`
