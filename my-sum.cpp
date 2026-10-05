@@ -3,6 +3,11 @@
 // Professor Mingming Chen
 // Programming Project 1
 
+/*
+    This program computes prefix sums with m forked workers, via the Hillis-Steele algorithm, using shared memory and a reusable barrier
+    Runs in O(n log n / m + m log n) time complexity, with O(n) space complexity
+*/
+
 #include <sys/types.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -22,7 +27,10 @@
 
 using namespace std;
 
-// reading from the input file, deals with commas, tabs, and spaces
+// Reads integers from an input file, handles spaces, tabs, and commas
+//  @param filename: the name of the input file to read from.
+//  @return A vector with integers from the file
+
 vector<int> read_file(string filename)
 {
     vector<int> data;
@@ -51,13 +59,21 @@ vector<int> read_file(string filename)
     return data;
 }
 
-// number of phases in the prefix sum: ceil(log2(n))
+// Calculates number of prefix-sum phases needed, log2(n) rounded up
+//  @param n: number of elements in the array
+//  @return The number of phases needed
+
 int num_phases(int n)
 {
     return static_cast<int>(ceil(log2(n)));
 }
 
-// writing to the output file
+// Writes the results to an output file
+//  @param filename: the name of the output file to write to.
+//  @param x: pointer to shared memory array that contains the results
+//  @param n: number of elements in the array
+//  @return true if successful, false otherwise
+
 bool write_output_file(string &filename, volatile int *x, int n)
 {
     ofstream out(filename);
@@ -78,7 +94,15 @@ bool write_output_file(string &filename, volatile int *x, int n)
     return true;
 }
 
-// parses arguments, ensures it matches requirements from the project doc
+// Parses and validates arguments to ensure its correctly formatted and meets constraints listed in the document
+//  @param argc: number of command line arguments
+//  @param argv: array of command line arguments
+//  @param n: reference to store the number of elements
+//  @param m: reference to store the number of processes (workers)
+//  @param input_file: reference to store the input file name
+//  @param output_file: reference to store the output file name
+//  @return true if arguments are valid, false otherwise
+
 bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file, string &output_file)
 {
     if (argc != 5)
@@ -130,25 +154,36 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     return true;
 }
 
-// implemented a reusable barrier algorithm, O(1) space complexity, O(m) time complexity
-void reusable_barrier(int id, int row, int m, volatile int *wall)
+// Implements a reusable barrier to sychronize processes using shared memory
+//  @param id: the process ID (0 to m-1)
+//  @param phase: the current phase of the prefix-sum algorithm
+//  @param m: the number of processes (workers)
+//  @param wall: pointer to the shared memory integer used for synchronization
+
+void reusable_barrier(int id, int phase, int m, volatile int *wall)
 {
-    while (wall[0] != (row - 1) * m + id)
+    while (wall[0] != (phase - 1) * m + id)
     {
         // wait until its process's turn
     }
-    wall[0] = (row - 1) * m + id + 1; // signal that this process has arrived
-    while (wall[0] < row * m)
+    wall[0] = (phase - 1) * m + id + 1; // signal that this process has arrived
+    while (wall[0] < phase * m)
     {
         // wait until every process has arrived
     }
 }
 
-// implemented Hillis and Steele concurrent prefix-sum algorithm, maintains the time complexity in doc
+// Run's Hillis and Steele concurrent prefix-sum algorithm, maintains the time complexity O(n log n / m + m log n)
+//  @param x: pointer to shared memory array that contains the input data and will hold the results
+//  @param n: number of elements in the array
+//  @param m: number of processes (workers)
+//  @param id: the process ID (0 to m-1)
+//  @param wall: pointer to the shared memory integer used for synchronization
+
 void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile int *wall)
 {
     int start, end;
-    int maxL1 = num_phases(n);
+    int totalPhases = num_phases(n);
     int chunk = n / m;
     int rem = n % m;
 
@@ -163,7 +198,7 @@ void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile in
         end = start + chunk;
     }
 
-    for (int p = 1; p <= maxL1; p++)
+    for (int p = 1; p <= totalPhases; p++)
     {
         for (int i = start; i <= end - 1; i++)
         {
@@ -179,6 +214,11 @@ void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile in
         reusable_barrier(id, p, m, wall);
     }
 }
+
+// Runs the main program
+//  @param argc: number of command line arguments
+//  @param argv: array of command line arguments
+//  @return EXIT_SUCCESS if successful, EXIT_FAILURE otherwise
 
 int main(int argc, char *argv[])
 {
