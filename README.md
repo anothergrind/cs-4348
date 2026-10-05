@@ -36,7 +36,12 @@ processes; the input file; and the output file.
 
 The program uses a reusable generation-based barrier and two alternating
 working arrays. This avoids storing all intermediate Hillis-Steele rows and
-uses `O(n)` space for the arrays.
+uses `O(n)` space for the working arrays. The barrier stores one arrival
+generation per worker, so its barrier state is `O(m)`; because `m <= n`, the
+total shared memory remains `O(n)`. 
+O(1) barrier bonus: we did not implement an `O(1)`-space
+barrier. With read/write-only synchronization, each worker keeps its own
+arrival slot.
 
 To remove the compiled executable:
 
