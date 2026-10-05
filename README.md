@@ -3,6 +3,7 @@
 ### CS 4348: Operating Systems
 
 Professor Mingming Chen
+
 Team Members: Kamsi Ozorji and Khoa Bui
 
 This program implements the Hillis and Steele concurrent prefix-sum algorithm using POSIX processes (`fork`, `waitpid`) and shared memory (`shmget`, `shmat`). It is designed to run on Linux/Unix-based machines (e.g., Ubuntu, WSL, or UTD CS servers).
@@ -14,7 +15,7 @@ Runs in O(n log n / m + m log n) time complexity, with O(n) space complexity
 
 From an Ubuntu/WSL terminal
 
-```
+```bash
 cd your_library/cs-4348
 make
 ```
@@ -27,6 +28,7 @@ The input file must contain at least `n` spaced integers. Currently the spacing 
 ### Running the program
 
 The program acccepts four command line arguments in the order below:
+
 `./my-sum <n> <m> <input_file> <output_file>`
 
 - n, the number of values
@@ -36,7 +38,7 @@ The program acccepts four command line arguments in the order below:
 
 For example
 
-```
+```bash
 printf "1 2 3 4 5\n" > input.txt
 ./my-sum 5 2 input.txt output.txt
 cat output.txt
