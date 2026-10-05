@@ -10,12 +10,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-// C standard library (argument parsing + error reporting)
+// C standard library (argument parsing + error reporting, file I/O & math)
 #include <cstdlib>
 #include <cerrno>
 #include <cstring>
-
-// C++ standard library (file I/O & math)
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -25,7 +23,7 @@
 
 using namespace std;
 
-// reading from the input file
+// reading from the input file, deals with commas and spaces
 vector<int> read_file(string filename)
 {
     vector<int> data;
@@ -39,11 +37,15 @@ vector<int> read_file(string filename)
     string line;
     while (getline(in, line))
     {
-        // process each line of input
+        for (char &c : line)
+        {
+            if (c == ',' || c == '\t')
+            {
+                c = ' ';
+            }
+        }
         istringstream iss(line);
-        // parse the line into an array of integers
         int val;
-        // store the integers into the vector
         while (iss >> val)
             data.push_back(val);
     }
@@ -130,12 +132,29 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
 }
 
 // implemented Hillis and Steele concurrent prefix-sum algorithm
-int hillis_steele_prefix_sum(int x[], int n, int m)
+void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile int *wall)
 {
     int maxL1 = num_phases(n);
+    int chunk = n / m;
+    int rem = n % m;
+
+    if (id < rem)
+    {
+        chunk++;
+        id = chunk;
+        start = id * (chunk + 1);
+        end = start + chunk + 1;
+    }
+    else
+    {
+        id = chunk;
+        start = rem * (chunk + 1) + (id - rem) * chunk;
+        end = start + chunk;
+    }
+
     for (int p = 1; p <= maxL1; p++)
     {
-        for (int i = 0; i <= n - 1; i++)
+        for (int i = start; i <= end - 1; i++)
         {
             if (i < (1 << (p - 1)))
             {
@@ -146,31 +165,22 @@ int hillis_steele_prefix_sum(int x[], int n, int m)
                 x[p * n + i] = x[(p - 1) * n + (i - (1 << (p - 1)))] + x[(p - 1) * n + i];
             }
         }
+        non_reusable_barrier(id, p, m, wall); // wait for all processes to finish this phase
     }
     return 0; // change to actual thing
 }
 
 // implemented a non-reusable barrier algorithm
-void non_reusable_barrier(int wall[], int m)
+void non_reusable_barrier(int id, int row, int m, volatile int *wall)
 {
-    while (true)
+    wall[row * m + id] = 1; // signal that this process has reached the barrier
+    for (int j = 0; j < m; j++)
     {
-        bool all_done = true;
-        for (int j = 1; j <= m; j++)
+        while (wall[row * m + j] == 0)
         {
-            if (wall[j] == 0)
-            {
-                all_done = false;
-                break;
-            }
-        }
-        if (all_done)
-        {
-            break;
-        }
+        } // wait for all processes to reach the barrier
     }
 }
-// TODO: Ensure your program uses O(n log_2 n) space and run in O( ([n log_2 n] / m) + m log_2 n) time.
 
 /*
 BONUS:
@@ -184,6 +194,8 @@ int main(int argc, char *argv[])
 {
     int n, m;
     string inputFile, outputFile;
+    int n_numphases = num_phases(n);
+    int phases = n_numphases + 1;
 
     // 1. Parse and validate arguments
     if (!parse_arguments(argc, argv, n, m, inputFile, outputFile))
@@ -193,24 +205,54 @@ int main(int argc, char *argv[])
 
     // Read input file
     vector<int> data = read_file(inputFile);
-    if (data.size() != static_cast<size_t>(n))
+    if (data.size() < static_cast<size_t>(n))
     {
-        cerr << "Error: number of integers read from file does not match n (" << n << ")" << endl;
+        cerr << "Error: file contains fewer than n integers (found " << data.size() << ", required at least " << n << ")" << endl;
         return EXIT_FAILURE;
+    }
+
+    if (data.size() > static_cast<size_t>(n))
+    {
+        data.resize(n); // reduce to n elements if more were read
     }
 
     cout << "Successfully read " << data.size() << " integers from " << inputFile << endl;
 
-    // TODO: Set up shared memory, copy input data into shared array,
-    // fork worker processes, run hillis_steele_prefix_sum and barrier.
+    int size = (n_numphases + 1) * n * sizeof(int);
+    int wall = phases * m * sizeof(int);
+    int shmID = shmget(IPC_PRIVATE, size, IPC_CREAT | 0600);
+    int *x = (int *)shmat(shmID, nullptr, 0);
+
+    // Copy data to shared memory
+    for (int i = 0; i <= 0; i++)
+    {
+        x[i] = data[i];
+    }
 
     // Write output file
-    /*
-        if (!write_output_file(outputFile, x, n))
+    if (!write_output_file(outputFile, x, n))
+    {
+        cerr << "Error writing to output file: " << outputFile << endl;
+        return EXIT_FAILURE;
+    }
+
+    // call output file
+    write_outputFile(outputFile, x, n);
+    for (int i = 0; i < m; i++)
+    {
+        fork();
+        if (pid == 0) // checking if the process is a child process
         {
-            return EXIT_FAILURE;
+            hillis_steele_prefix_sum(x, n, m);
+            _exit(0);
         }
-    */
+        else
+        {
+            waitpid(-1, nullptr, 0); // wait for child process to finish
+        }
+    }
+    shmdt(shmID, nullptr, 0);         // detach shared memory
+    shmctl(shmID, IPC_RMID, nullptr); // remove shared memory segment
 
     return 0;
 }
