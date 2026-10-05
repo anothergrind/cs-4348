@@ -9,6 +9,7 @@
 #include <sys/shm.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <signal.h>
 
 // C standard library (argument parsing + error reporting, file I/O & math)
 #include <cstdlib>
@@ -59,7 +60,7 @@ int num_phases(int n)
 }
 
 // writing to the output file
-bool write_output_file(string &filename, int x[], int n)
+bool write_output_file(string &filename, volatile int *x, int n)
 {
     ofstream out(filename);
     if (!out)
@@ -131,23 +132,33 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     return true;
 }
 
+// implemented a non-reusable barrier algorithm
+void non_reusable_barrier(int id, int row, int m, volatile int *wall)
+{
+    wall[row * m + id] = 1; // signal that this process has reached the barrier
+    for (int j = 0; j < m; j++)
+    {
+        while (wall[row * m + j] == 0)
+        {
+        } // wait for all processes to reach the barrier
+    }
+}
+
 // implemented Hillis and Steele concurrent prefix-sum algorithm
 void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile int *wall)
 {
+    int start, end;
     int maxL1 = num_phases(n);
     int chunk = n / m;
     int rem = n % m;
 
     if (id < rem)
     {
-        chunk++;
-        id = chunk;
         start = id * (chunk + 1);
         end = start + chunk + 1;
     }
     else
     {
-        id = chunk;
         start = rem * (chunk + 1) + (id - rem) * chunk;
         end = start + chunk;
     }
@@ -167,19 +178,6 @@ void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile in
         }
         non_reusable_barrier(id, p, m, wall); // wait for all processes to finish this phase
     }
-    return 0; // change to actual thing
-}
-
-// implemented a non-reusable barrier algorithm
-void non_reusable_barrier(int id, int row, int m, volatile int *wall)
-{
-    wall[row * m + id] = 1; // signal that this process has reached the barrier
-    for (int j = 0; j < m; j++)
-    {
-        while (wall[row * m + j] == 0)
-        {
-        } // wait for all processes to reach the barrier
-    }
 }
 
 /*
@@ -194,14 +192,15 @@ int main(int argc, char *argv[])
 {
     int n, m;
     string inputFile, outputFile;
-    int n_numphases = num_phases(n);
-    int phases = n_numphases + 1;
 
     // 1. Parse and validate arguments
     if (!parse_arguments(argc, argv, n, m, inputFile, outputFile))
     {
         return EXIT_FAILURE;
     }
+
+    int n_numphases = num_phases(n);
+    int phases = n_numphases + 1; // total number of phases including the initial phase
 
     // Read input file
     vector<int> data = read_file(inputFile);
@@ -219,40 +218,132 @@ int main(int argc, char *argv[])
     cout << "Successfully read " << data.size() << " integers from " << inputFile << endl;
 
     int size = (n_numphases + 1) * n * sizeof(int);
-    int wall = phases * m * sizeof(int);
+    int wallSize = phases * m * sizeof(int);
+
     int shmID = shmget(IPC_PRIVATE, size, IPC_CREAT | 0600);
-    int *x = (int *)shmat(shmID, nullptr, 0);
+    if (shmID == -1)
+    {
+        cerr << "Error creating shared memory for x: " << strerror(errno) << endl;
+        return EXIT_FAILURE;
+    }
+    volatile int *x = (volatile int *)shmat(shmID, nullptr, 0);
+    if (x == (void *)-1)
+    {
+        cerr << "Error attaching shared memory for x: " << strerror(errno) << endl;
+        return EXIT_FAILURE;
+    }
+
+    int wallID = shmget(IPC_PRIVATE, wallSize, IPC_CREAT | 0600);
+    if (wallID == -1)
+    {
+        cerr << "Error creating shared memory for wall: " << strerror(errno) << endl;
+        shmdt((void *)x);
+        shmctl(shmID, IPC_RMID, nullptr);
+        return EXIT_FAILURE;
+    }
+    volatile int *wall = (volatile int *)shmat(wallID, nullptr, 0);
+    if (wall == (void *)-1)
+    {
+        cerr << "Error attaching shared memory for wall: " << strerror(errno) << endl;
+        shmdt((void *)x);
+        shmctl(shmID, IPC_RMID, nullptr);
+        shmctl(wallID, IPC_RMID, nullptr);
+        return EXIT_FAILURE;
+    }
 
     // Copy data to shared memory
-    for (int i = 0; i <= 0; i++)
+    for (int i = 0; i < n; i++)
     {
         x[i] = data[i];
     }
 
-    // Write output file
-    if (!write_output_file(outputFile, x, n))
+    // initialize barrier memory
+    for (int i = 0; i < phases * m; i++)
     {
-        cerr << "Error writing to output file: " << outputFile << endl;
+        wall[i] = 0;
+    }
+
+    vector<pid_t> children;
+    children.reserve(m);
+
+    for (int i = 0; i < m; i++)
+    {
+        pid_t pid = fork();
+        if (pid == -1)
+        {
+            cerr << "Error forking process: " << strerror(errno) << endl;
+
+            // kill created children
+            for (pid_t child : children)
+            {
+                kill(child, SIGKILL);
+            }
+
+            for (pid_t child : children)
+            {
+                waitpid(child, nullptr, 0);
+            }
+
+            // detach and remove shared memory
+            shmdt((void *)x);
+            shmdt((void *)wall);
+
+            shmctl(shmID, IPC_RMID, nullptr);
+            shmctl(wallID, IPC_RMID, nullptr);
+
+            return EXIT_FAILURE;
+        }
+        if (pid == 0) // checking if the process is a child process
+        {
+            hillis_steele_prefix_sum(x, n, m, i, wall);
+            _exit(0);
+        }
+
+        children.push_back(pid);
+    }
+
+    bool waitFailed = false;
+    for (pid_t child : children)
+    {
+        if (waitpid(child, nullptr, 0) == -1)
+        {
+            cerr << "Error waiting for child process: " << strerror(errno) << endl;
+            waitFailed = true;
+        }
+    }
+
+    if (waitFailed)
+    {
+        // detach and remove shared memory
+        shmdt((void *)x);
+        shmdt((void *)wall);
+
+        shmctl(shmID, IPC_RMID, nullptr);
+        shmctl(wallID, IPC_RMID, nullptr);
+
         return EXIT_FAILURE;
     }
 
-    // call output file
-    write_outputFile(outputFile, x, n);
-    for (int i = 0; i < m; i++)
+    if (!write_output_file(outputFile, x, n))
     {
-        fork();
-        if (pid == 0) // checking if the process is a child process
-        {
-            hillis_steele_prefix_sum(x, n, m);
-            _exit(0);
-        }
-        else
-        {
-            waitpid(-1, nullptr, 0); // wait for child process to finish
-        }
-    }
-    shmdt(shmID, nullptr, 0);         // detach shared memory
-    shmctl(shmID, IPC_RMID, nullptr); // remove shared memory segment
+        cerr << "Error writing to output file: " << outputFile << endl;
+        // detach and remove shared memory
+        shmdt((void *)x);
+        shmdt((void *)wall);
 
-    return 0;
+        shmctl(shmID, IPC_RMID, nullptr);
+        shmctl(wallID, IPC_RMID, nullptr);
+
+        return EXIT_FAILURE;
+    }
+
+    // detach shared memory
+    shmdt((void *)x);
+    shmdt((void *)wall);
+
+    // remove shared memory segment
+    shmctl(shmID, IPC_RMID, nullptr);
+    shmctl(wallID, IPC_RMID, nullptr);
+
+    return EXIT_SUCCESS;
 }
