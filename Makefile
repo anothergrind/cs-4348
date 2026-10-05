@@ -6,8 +6,8 @@ TARGET := my-sum
 
 all: $(TARGET)
 
-$(TARGET): main.cpp
-	$(CXX) $(CXXFLAGS) main.cpp -o $(TARGET)
+$(TARGET): my-sum.cpp
+	$(CXX) $(CXXFLAGS) my-sum.cpp -o $(TARGET)
 
 clean:
 	rm -f $(TARGET)
