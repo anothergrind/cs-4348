@@ -22,18 +22,20 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <cmath>
 #include <sstream>
+#include <cstdint>
+#include <climits>
 
 using namespace std;
 
 // Reads integers from an input file, handles spaces, tabs, and commas
 //  @param filename: the name of the input file to read from.
+//  @param count: the number of valid integers required.
 //  @return A vector with integers from the file
 
-vector<int> read_file(string filename)
+vector<int64_t> read_file(string filename, int count)
 {
-    vector<int> data;
+    vector<int64_t> data;
     ifstream in(filename);
     if (!in)
     {
@@ -42,7 +44,7 @@ vector<int> read_file(string filename)
     }
 
     string line;
-    while (getline(in, line))
+    while (data.size() < static_cast<size_t>(count) && getline(in, line))
     {
         for (char &c : line)
         {
@@ -52,9 +54,24 @@ vector<int> read_file(string filename)
             }
         }
         istringstream iss(line);
-        int val;
-        while (iss >> val)
-            data.push_back(val);
+        string token;
+        while (data.size() < static_cast<size_t>(count) && iss >> token)
+        {
+            char *end = nullptr;
+            errno = 0;
+            long long value = strtoll(token.c_str(), &end, 10);
+            if (errno == ERANGE || end == token.c_str() || *end != '\0')
+            {
+                cerr << "Error: invalid integer in input file: " << token << endl;
+                exit(EXIT_FAILURE);
+            }
+            data.push_back(static_cast<int64_t>(value));
+        }
+    }
+    if (in.bad())
+    {
+        cerr << "Error reading input file: " << filename << endl;
+        exit(EXIT_FAILURE);
     }
     return data;
 }
@@ -65,7 +82,10 @@ vector<int> read_file(string filename)
 
 int num_phases(int n)
 {
-    return static_cast<int>(ceil(log2(n)));
+    int phases = 0;
+    for (int64_t offset = 1; offset < n; offset <<= 1)
+        ++phases;
+    return phases;
 }
 
 // Writes the results to an output file
@@ -74,7 +94,7 @@ int num_phases(int n)
 //  @param n: number of elements in the array
 //  @return true if successful, false otherwise
 
-bool write_output_file(string &filename, volatile int *x, int n)
+bool write_output_file(string &filename, volatile int64_t *x, int n)
 {
     ofstream out(filename);
     if (!out)
@@ -91,6 +111,12 @@ bool write_output_file(string &filename, volatile int *x, int n)
             out << " ";
     }
     out << endl;
+    out.close();
+    if (!out)
+    {
+        cerr << "Error writing output file: " << filename << endl;
+        return false;
+    }
     return true;
 }
 
@@ -114,7 +140,13 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     char *end;
 
     // parse n
-    long n_long = strtol(argv[1], &end, 10);
+    errno = 0;
+    long long n_long = strtoll(argv[1], &end, 10);
+    if (errno == ERANGE || n_long > INT_MAX || n_long < INT_MIN)
+    {
+        cerr << "Error: n is out of range: " << argv[1] << endl;
+        return false;
+    }
     if (end == argv[1] || *end != '\0')
     {
         cerr << "Error: junk after n: " << argv[1] << endl;
@@ -123,7 +155,13 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
     n = static_cast<int>(n_long);
 
     // parse m
-    long m_long = strtol(argv[2], &end, 10);
+    errno = 0;
+    long long m_long = strtoll(argv[2], &end, 10);
+    if (errno == ERANGE || m_long > INT_MAX || m_long < INT_MIN)
+    {
+        cerr << "Error: m is out of range: " << argv[2] << endl;
+        return false;
+    }
     if (end == argv[2] || *end != '\0')
     {
         cerr << "Error: junk after m: " << argv[2] << endl;
@@ -158,16 +196,18 @@ bool parse_arguments(int argc, char *argv[], int &n, int &m, string &input_file,
 //  @param id: the process ID (0 to m-1)
 //  @param phase: the current phase of the prefix-sum algorithm
 //  @param m: the number of processes (workers)
-//  @param wall: pointer to the shared memory integer used for synchronization
+//  @param wall: pointer to the shared memory used for synchronization, wall[0] is the arrival counter and wall[1] is the abort flag
 
 void reusable_barrier(int id, int phase, int m, volatile int *wall)
 {
-    while (wall[0] != (phase - 1) * m + id)
+    while (wall[0] != (phase - 1) * m + id && wall[1] == 0)
     {
         // wait until its process's turn
     }
-    wall[0] = (phase - 1) * m + id + 1; // signal that this process has arrived
-    while (wall[0] < phase * m)
+    if (wall[1] != 0)
+        return;
+    wall[0] = (phase - 1) * m + id + 1;
+    while (wall[0] < phase * m && wall[1] == 0)
     {
         // wait until every process has arrived
     }
@@ -178,9 +218,9 @@ void reusable_barrier(int id, int phase, int m, volatile int *wall)
 //  @param n: number of elements in the array
 //  @param m: number of processes (workers)
 //  @param id: the process ID (0 to m-1)
-//  @param wall: pointer to the shared memory integer used for synchronization
+//  @param wall: pointer to the shared memory used for synchronization, wall[0] is the arrival counter and wall[1] is the abort flag
 
-void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile int *wall)
+void hillis_steele_prefix_sum(volatile int64_t *x, int n, int m, int id, volatile int *wall)
 {
     int start, end;
     int totalPhases = num_phases(n);
@@ -202,17 +242,51 @@ void hillis_steele_prefix_sum(volatile int *x, int n, int m, int id, volatile in
     {
         for (int i = start; i <= end - 1; i++)
         {
-            if (i < (1 << (p - 1)))
+            int offset = 1 << (p - 1);
+            if (i < offset)
             {
                 x[(p % 2) * n + i] = x[((p - 1) % 2) * n + i];
             }
             else
             {
-                x[(p % 2) * n + i] = x[((p - 1) % 2) * n + (i - (1 << (p - 1)))] + x[((p - 1) % 2) * n + i];
+                x[(p % 2) * n + i] = x[((p - 1) % 2) * n + (i - offset)] + x[((p - 1) % 2) * n + i];
             }
         }
         reusable_barrier(id, p, m, wall);
     }
+}
+
+// Detaches and removes both shared memory segments, reporting any cleanup failures
+//  @param x: pointer to shared memory array that contains the input data and results
+//  @param wall: pointer to the shared memory used for synchronization
+//  @param shmID: the shared memory ID for x
+//  @param wallID: the shared memory ID for wall
+//  @return true if successful, false otherwise
+
+bool cleanup_shared_memory(volatile int64_t *x, volatile int *wall, int shmID, int wallID)
+{
+    bool ok = true;
+    if (shmdt((void *)x) == -1)
+    {
+        cerr << "Error detaching x shared memory: " << strerror(errno) << endl;
+        ok = false;
+    }
+    if (shmdt((void *)wall) == -1)
+    {
+        cerr << "Error detaching barrier shared memory: " << strerror(errno) << endl;
+        ok = false;
+    }
+    if (shmctl(shmID, IPC_RMID, nullptr) == -1)
+    {
+        cerr << "Error removing x shared memory: " << strerror(errno) << endl;
+        ok = false;
+    }
+    if (shmctl(wallID, IPC_RMID, nullptr) == -1)
+    {
+        cerr << "Error removing barrier shared memory: " << strerror(errno) << endl;
+        ok = false;
+    }
+    return ok;
 }
 
 // Runs the main program
@@ -232,22 +306,17 @@ int main(int argc, char *argv[])
     }
 
     // Read input file
-    vector<int> data = read_file(inputFile);
+    vector<int64_t> data = read_file(inputFile, n);
     if (data.size() < static_cast<size_t>(n))
     {
         cerr << "Error: file contains fewer than n integers (found " << data.size() << ", required at least " << n << ")" << endl;
         return EXIT_FAILURE;
     }
 
-    if (data.size() > static_cast<size_t>(n))
-    {
-        data.resize(n); // reduce to n elements if more were read
-    }
-
     cout << "Successfully read " << data.size() << " integers from " << inputFile << endl;
 
-    int size = 2 * n * sizeof(int);
-    int wallSize = sizeof(int);
+    size_t size = 2ULL * static_cast<size_t>(n) * sizeof(int64_t);
+    size_t wallSize = 2 * sizeof(int);
 
     int shmID = shmget(IPC_PRIVATE, size, IPC_CREAT | 0600);
     if (shmID == -1)
@@ -255,10 +324,11 @@ int main(int argc, char *argv[])
         cerr << "Error creating shared memory for x: " << strerror(errno) << endl;
         return EXIT_FAILURE;
     }
-    volatile int *x = (volatile int *)shmat(shmID, nullptr, 0);
+    volatile int64_t *x = (volatile int64_t *)shmat(shmID, nullptr, 0);
     if (x == (void *)-1)
     {
         cerr << "Error attaching shared memory for x: " << strerror(errno) << endl;
+        shmctl(shmID, IPC_RMID, nullptr);
         return EXIT_FAILURE;
     }
 
@@ -288,6 +358,7 @@ int main(int argc, char *argv[])
 
     // initialize barrier memory
     wall[0] = 0;
+    wall[1] = 0;
 
     vector<pid_t> children;
     children.reserve(m);
@@ -311,65 +382,102 @@ int main(int argc, char *argv[])
             }
 
             // detach and remove shared memory
-            shmdt((void *)x);
-            shmdt((void *)wall);
-
-            shmctl(shmID, IPC_RMID, nullptr);
-            shmctl(wallID, IPC_RMID, nullptr);
+            cleanup_shared_memory(x, wall, shmID, wallID);
 
             return EXIT_FAILURE;
         }
         if (pid == 0) // checking if the process is a child process
         {
             hillis_steele_prefix_sum(x, n, m, i, wall);
-            _exit(0);
+
+            // Detach shared memory segments before exit
+            bool detach_ok = true;
+            if (shmdt((void *)x) == -1)
+            {
+                cerr << "Error detaching x shared memory in child: " << strerror(errno) << endl;
+                detach_ok = false;
+            }
+            if (shmdt((void *)wall) == -1)
+            {
+                cerr << "Error detaching barrier shared memory in child: " << strerror(errno) << endl;
+                detach_ok = false;
+            }
+            _exit(detach_ok ? 0 : EXIT_FAILURE);
         }
 
         children.push_back(pid);
     }
 
     bool waitFailed = false;
-    for (pid_t child : children)
+    bool abnormal_msg_printed = false;
+    vector<bool> reaped(children.size(), false);
+    size_t remaining = children.size();
+    while (remaining > 0)
     {
-        if (waitpid(child, nullptr, 0) == -1)
+        bool progress = false;
+        for (size_t i = 0; i < children.size(); ++i)
         {
-            cerr << "Error waiting for child process: " << strerror(errno) << endl;
-            waitFailed = true;
+            if (reaped[i])
+                continue;
+
+            int status = 0;
+            pid_t result = waitpid(children[i], &status, WNOHANG);
+            if (result == -1)
+            {
+                if (errno == EINTR)
+                    continue;
+                cerr << "Error waiting for child process: " << strerror(errno) << endl;
+                waitFailed = true;
+                wall[1] = 1;
+                kill(children[i], SIGKILL); // Ensure the failed-wait child is killed
+                reaped[i] = true;
+                --remaining;
+                progress = true;
+                for (size_t j = 0; j < children.size(); ++j)
+                {
+                    if (!reaped[j])
+                        kill(children[j], SIGKILL);
+                }
+                continue;
+            }
+            if (result == 0)
+                continue;
+
+            reaped[i] = true;
+            --remaining;
+            progress = true;
+            if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+            {
+                if (!abnormal_msg_printed)
+                {
+                    cerr << "Error: worker process terminated abnormally" << endl;
+                    abnormal_msg_printed = true;
+                }
+                waitFailed = true;
+                wall[1] = 1;
+                for (size_t j = 0; j < children.size(); ++j)
+                {
+                    if (!reaped[j])
+                        kill(children[j], SIGKILL);
+                }
+            }
         }
+        if (!progress && remaining > 0)
+            usleep(1000);
     }
 
     if (waitFailed)
     {
-        // detach and remove shared memory
-        shmdt((void *)x);
-        shmdt((void *)wall);
-
-        shmctl(shmID, IPC_RMID, nullptr);
-        shmctl(wallID, IPC_RMID, nullptr);
-
+        cleanup_shared_memory(x, wall, shmID, wallID);
         return EXIT_FAILURE;
     }
 
     if (!write_output_file(outputFile, x, n))
     {
         cerr << "Error writing to output file: " << outputFile << endl;
-        // detach and remove shared memory
-        shmdt((void *)x);
-        shmdt((void *)wall);
-
-        shmctl(shmID, IPC_RMID, nullptr);
-        shmctl(wallID, IPC_RMID, nullptr);
-
+        cleanup_shared_memory(x, wall, shmID, wallID);
         return EXIT_FAILURE;
     }
 
-    // detach shared memory
-    shmdt((void *)x);
-    shmdt((void *)wall);
-
-    // remove shared memory segment
-    shmctl(shmID, IPC_RMID, nullptr);
-    shmctl(wallID, IPC_RMID, nullptr);
-
-    return EXIT_SUCCESS;
+    return cleanup_shared_memory(x, wall, shmID, wallID) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
