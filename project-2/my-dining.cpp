@@ -9,17 +9,45 @@ using namespace std;
 
 // ===== Peterson lock (A) =====
 // Two-thread lock. id must be 0 or 1, distinct for the two participants.
+
+/*
+    Pseudocode from class
+        Boolean flag[2] := {false, false};
+        Integer turn;
+
+        Acquire:
+            flag[myId] := true;
+            turn := 1 - myId;
+            while(flag[1 - myId] and  (turn != myId)) do
+                begin
+                    ;   // do nothing (spin-wait)
+                end while
+
+
+        Critical Section
+
+        Release:
+            flag[myId] := false;
+*/
 class PetersonLock
 {
+    atomic<bool> flag[2] = {false, false};
+    atomic<int> turn{0};
+
 public:
     void acquire(int id)
     {
-        // TODO
+        flag[id] = true;
+        turn = 1 - id;
+        while (flag[1 - id] && (turn != id))
+        {
+            // do nothing (spin-wait)
+        }
     }
 
     void release(int id)
     {
-        // TODO
+        flag[id] = false;
     }
 };
 
