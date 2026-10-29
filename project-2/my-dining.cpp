@@ -4,6 +4,8 @@
 #include <atomic>
 #include <thread>
 #include <numeric>
+#include <cmath>
+#include <vector>
 
 using namespace std;
 
@@ -53,22 +55,62 @@ public:
 
 // ===== Tournament-tree lock (B) =====
 // n-thread lock built from PetersonLocks. tid is the thread's number, 0 to n-1.
+
+/*
+    TTLock(n):
+    size := 1
+    while size < n: size := size * 2
+    levels := log2(size)
+    locks[1 .. size-1] := array of PetersonLock
+
+    acquire(tid):
+        node := size + tid
+        while node > 1:
+            locks[node / 2].acquire(node % 2)    // my id = which child I am
+            node := node / 2                     // move up
+        // holding the root: critical section
+
+    release(tid):
+        // release in REVERSE order: root first, leaf level last
+        for level := levels-1 down to 0:
+            node := (size + tid) >> level        // my ancestor at that level
+            locks[node / 2].release(node % 2)
+*/
 class TTLock
 {
+    int size = 1;
+    double levels;
+    vector<PetersonLock> locks;
+
 public:
     TTLock(int n)
     {
-        // TODO
+        while (size <= n)
+        {
+            size = size * 2;
+        }
+        levels = log2(size);
+        locks = vector<PetersonLock>(size);
     }
 
     void acquire(int tid)
     {
-        // TODO
+        int node = size + tid;
+        while (node > 1)
+        {
+            locks[node / 2].acquire(node % 2);
+            node = node / 2;
+        }
     }
 
     void release(int tid)
     {
-        // TODO
+        int node = 0;
+        for (int level = levels - 1; level >= 0; level--)
+        {
+            node = (size + tid) >> level;
+            locks[node / 2].release(node % 2);
+        }
     }
 };
 
