@@ -8,46 +8,57 @@ Project 2 Team 5
 
 Kamsi Ozorji and Khoa Bui
 
-## Overview
+# Dining Philosophers
 
-`my-dining` solves the Dining Philosophers problem twice, using only locks built from Peterson's two-thread algorithm:
+This project implements the Dining Philosophers problem in C++17 using
+Peterson locks and `std::thread`. It runs two solutions:
 
-1. **Coarse-grained:** one n-thread Tournament-Tree lock protects all chopsticks.
-2. **Fine-grained:** each chopstick has its own two-thread Peterson lock.
+- **Coarse-grained:** one tournament-tree lock protects all chopsticks.
+- **Fine-grained:** each chopstick has its own two-thread Peterson lock.
 
-Each philosopher is a `std::thread` and completes five think/eat cycles. The coarse run finishes before the fine run starts.
+## Building and running
 
-## Compile and run
+```bash
+make
+./my-dining 5
+```
+
+The argument must be an integer `n >= 2`. The program runs five
+thinking/eating cycles for each philosopher and prints the coarse-grained
+solution before the fine-grained solution.
+
+To remove the executable:
 
 ```bash
 make clean
-make
-./my-dining n      # n >= 2, e.g. ./my-dining 5
 ```
 
-## Tournament-Tree lock design
+## Synchronization design
 
-The tree is stored in a vector, heap style:
+The Peterson lock supports exactly two participants, identified by local IDs
+`0` and `1`. Its flags and victim variable are `std::atomic`.
 
-- `size` is the smallest power of two >= n. Internal nodes are `1 .. size-1`, and each one is a `PetersonLock`.
-- Thread `tid` starts at leaf `size + tid`. Node `k`'s parent is `k / 2`, and `k % 2` (left child 0, right child 1) is its Peterson id there, so the two threads meeting at a node always have different ids.
-- **acquire:** go from the leaf up to the root, acquiring each parent lock. Holding the root means holding the lock.
-- **release:** release the same locks in reverse, from the root down.
-- **n not a power of two:** leaves `n .. size-1` have no thread. Their Peterson flag stays `false`, so real threads never wait on them.
+The tournament-tree lock uses one Peterson lock at every internal tree node.
+The number of leaves is the smallest power of two greater than or equal to
+`n`. Philosopher `i` is assigned to leaf `leaves + i`; unused leaves are never
+assigned to a thread. A philosopher acquires Peterson locks from its leaf to
+the root and releases them in reverse order.
 
-## Fine-grained deadlock prevention
+In the fine-grained solution, chopstick `c` is shared only by philosophers
+`c` and `(c + 1) mod n`. Each philosopher acquires the lower-numbered of its
+two chopsticks first and releases the locks in reverse order. This prevents a
+circular wait, so the fine-grained solution is deadlock-free. The
+coarse-grained solution is deadlock-free because every philosopher uses the
+single tournament-tree lock before accessing either chopstick.
 
-Chopstick `i` is between philosophers `i` and `(i + 1) % n`. Philosopher `i` uses chopsticks `(i - 1 + n) % n` (left) and `i` (right). Each chopstick lock has exactly two users, so it is a valid Peterson lock.
+## Output
 
-- Philosophers `0 .. n-2` pick up the **left** chopstick first, then the right.
-- Philosopher `n-1` picks up the **right** chopstick first, then the left.
+The program prints `BEGIN COARSE` and `END COARSE`, followed by
+`BEGIN FINE` and `END FINE`. Activity records have this format:
 
-Deadlock needs every philosopher holding one chopstick and waiting for the next around the circle. Here philosopher 0 and philosopher `n-1` both want chopstick `n-1` first. Only one can hold it, so the other holds nothing and the circle is broken. Locks are released in reverse order. Neighbours share a chopstick lock, so they never eat together.
+```text
+SOLUTION philosopher_id round event
+```
 
-## Assumptions and limitations
-
-- `n` must be an integer >= 2. Anything else, or a wrong number of arguments, prints an error to stderr and exits with 1.
-- One thread per philosopher, so very large `n` is limited by the OS. If a thread cannot be created, the program prints an error, joins the threads that started, and exits with 1.
-- The locks spin (calling `yield()`), which uses CPU while threads wait.
-- Each thread has its own `thread_local` random generator for the 1-500 ms delays. Each event line is written with a single `printf` call.
-- Coarse allows one eater at a time. Fine allows non-neighbouring philosophers to eat together.
+where `SOLUTION` is `COARSE` or `FINE`, `round` is `0` through `4`, and
+`event` is `THINK_START`, `THINK_END`, `EAT_START`, or `EAT_END`.
