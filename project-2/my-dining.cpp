@@ -10,6 +10,9 @@
 #include <cstdlib>
 #include <random>
 #include <chrono>
+#include <cerrno>
+#include <climits>
+#include <exception>
 
 using namespace std;
 
@@ -93,14 +96,18 @@ void random_delay()
 
 // Coarse solution
 // One tournament-tree lock protects eating (both chopsticks) as a unit.
-void coarse_grained(int n)
+// Returns false if a thread could not be created; threads already started are still joined.
+bool coarse_grained(int n)
 {
     TTLock lock(n);
     vector<thread> ts;
-    for (int id = 0; id < n; id++)
+    bool ok = true;
+    try
     {
-        ts.emplace_back([&lock, id]()
-                        {
+        for (int id = 0; id < n; id++)
+        {
+            ts.emplace_back([&lock, id]()
+                            {
             for (int round = 0; round < 5; round++)
             {
                 print_event("COARSE", id, round, "THINK_START");
@@ -112,22 +119,32 @@ void coarse_grained(int n)
                 print_event("COARSE", id, round, "EAT_END");
                 lock.release(id);
             } });
+        }
+    }
+    catch (const exception &e)
+    {
+        fprintf(stderr, "COARSE: could not create philosopher thread: %s\n", e.what());
+        ok = false;
     }
     for (thread &t : ts)
         t.join();
+    return ok;
 }
 
 // Fine solution
 // One PetersonLock per chopstick. Chopstick c is shared by philosophers c (side 0) and c+1 (side 1).
 // The last philosopher takes its right chopstick first, which breaks the circular wait.
-void fine_grained(int n)
+bool fine_grained(int n)
 {
     vector<PetersonLock> chopsticks(n);
     vector<thread> ts;
-    for (int id = 0; id < n; id++)
+    bool ok = true;
+    try
     {
-        ts.emplace_back([&chopsticks, n, id]()
-                        {
+        for (int id = 0; id < n; id++)
+        {
+            ts.emplace_back([&chopsticks, n, id]()
+                            {
             int left = (id + n - 1) % n, right = id;
             int first = left, second = right;
             if (id == n - 1)
@@ -158,9 +175,16 @@ void fine_grained(int n)
                 chopsticks[second].release(secondSide);
                 chopsticks[first].release(firstSide);
             } });
+        }
+    }
+    catch (const exception &e)
+    {
+        fprintf(stderr, "FINE: could not create philosopher thread: %s\n", e.what());
+        ok = false;
     }
     for (thread &t : ts)
         t.join();
+    return ok;
 }
 
 // main + validation
@@ -169,20 +193,37 @@ int main(int argc, char *argv[])
 {
     char *end = nullptr;
     long n = 0;
+    errno = 0;
     if (argc == 2)
     {
         n = strtol(argv[1], &end, 10);
     }
-    if (argc != 2 || *end != '\0' || n < 2 || n > 10000)
+    if (argc != 2 || end == argv[1] || *end != '\0' || errno == ERANGE || n < 2)
     {
         fprintf(stderr, "Usage: %s n   (n >= 2)\n", argv[0]);
         return 1;
     }
-    puts("BEGIN COARSE");
-    coarse_grained(n);
-    puts("END COARSE");
-    puts("BEGIN FINE");
-    fine_grained(n);
-    puts("END FINE");
+    try
+    {
+        puts("BEGIN COARSE");
+        bool coarseOk = coarse_grained(n);
+        puts("END COARSE");
+        if (!coarseOk)
+        {
+            return 1;
+        }
+        puts("BEGIN FINE");
+        bool fineOk = fine_grained(n);
+        puts("END FINE");
+        if (!fineOk)
+        {
+            return 1;
+        }
+    }
+    catch (const exception &e)
+    {
+        fprintf(stderr, "Error: %s\n", e.what());
+        return 1;
+    }
     return 0;
 }
