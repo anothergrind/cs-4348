@@ -1,5 +1,5 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -pthread -Wall -Wextra -Wpedantic -O2
+CXXFLAGS = -std=c++17 -pthread -Wall -Wextra -Wpedantic -O2 -static-libstdc++ -static-libgcc
 TARGET = my-dining
 SOURCES = my-dining.cpp
 

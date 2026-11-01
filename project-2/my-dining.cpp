@@ -13,8 +13,8 @@
 
 using namespace std;
 
-// ===== Peterson lock (A) =====
-// Two-thread lock. id must be 0 or 1, distinct for the two participants.
+// Peterson lock
+// Two-thread lock. id must be 0 or 1, different for the two participants.
 class PetersonLock
 {
     atomic<bool> flag[2] = {false, false};
@@ -37,7 +37,7 @@ public:
     }
 };
 
-// ===== Tournament-tree lock (B) =====
+//  Tournament-tree lock
 // n-thread lock built from PetersonLocks. tid is the thread's number, 0 to n-1.
 class TTLock
 {
@@ -76,7 +76,7 @@ public:
     }
 };
 
-// ===== Philosopher loop / output / RNG (B) =====
+//  Philosopher loop / output
 // Prints one event line, e.g. "COARSE 2 0 THINK_START", in a single output call.
 void print_event(const char *solution, int id, int round, const char *event)
 {
@@ -84,14 +84,14 @@ void print_event(const char *solution, int id, int round, const char *event)
     fflush(stdout);
 }
 
-// Sleeps for a random 1-500 ms; each thread has its own generator.
+// sleeps for a random 1-500 ms; each thread has its own generator.
 void random_delay()
 {
     thread_local mt19937 gen(random_device{}());
     this_thread::sleep_for(chrono::milliseconds(uniform_int_distribution<int>(1, 500)(gen)));
 }
 
-// ===== Coarse solution (B) =====
+// Coarse solution
 // One tournament-tree lock protects eating (both chopsticks) as a unit.
 void coarse_grained(int n)
 {
@@ -117,10 +117,9 @@ void coarse_grained(int n)
         t.join();
 }
 
-// ===== Fine solution (A) =====
-// One PetersonLock per chopstick. Chopstick c is shared by philosophers c (side 0)
-// and c+1 (side 1). The last philosopher takes its right chopstick first, which
-// breaks the circular wait.
+// Fine solution
+// One PetersonLock per chopstick. Chopstick c is shared by philosophers c (side 0) and c+1 (side 1).
+// The last philosopher takes its right chopstick first, which breaks the circular wait.
 void fine_grained(int n)
 {
     vector<PetersonLock> chopsticks(n);
@@ -164,7 +163,7 @@ void fine_grained(int n)
         t.join();
 }
 
-// ===== main + validation (A) =====
+// main + validation
 // usage: ./my-dining n   (n >= 2)
 int main(int argc, char *argv[])
 {
