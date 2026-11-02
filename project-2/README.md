@@ -35,8 +35,8 @@ make clean
 
 ## Synchronization design
 
-The Peterson lock supports exactly two participants, identified by local IDs
-`0` and `1`. Its flags and victim variable are `std::atomic`.
+he Peterson lock supports exactly two participants, identified by local IDs
+`0` and `1`. Its flags and turn variable are `std::atomic`.
 
 The tournament-tree lock uses one Peterson lock at every internal tree node.
 The number of leaves is the smallest power of two greater than or equal to
@@ -44,12 +44,11 @@ The number of leaves is the smallest power of two greater than or equal to
 assigned to a thread. A philosopher acquires Peterson locks from its leaf to
 the root and releases them in reverse order.
 
-In the fine-grained solution, chopstick `c` is shared only by philosophers
-`c` and `(c + 1) mod n`. Each philosopher acquires the lower-numbered of its
-two chopsticks first and releases the locks in reverse order. This prevents a
-circular wait, so the fine-grained solution is deadlock-free. The
-coarse-grained solution is deadlock-free because every philosopher uses the
-single tournament-tree lock before accessing either chopstick.
+In the fine-grained solution, chopstick `c` is shared only by philosophers `c` and `(c + 1) mod n`. 
+Each philosopher acquires its previous-numbered chopstick first, except for the last philosopher, 
+who reverses the acquisition order. All philosophers release their chopsticks in reverse order. 
+This asymmetric ordering breaks the circular-wait condition, preventing deadlock.
+
 
 ## Output
 
